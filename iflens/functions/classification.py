@@ -22,7 +22,9 @@ def encode_image(image_path):
 def classify_image(image_path: str,
                    condition_schema: ConditionSchema,
                    client: Groq,
-                   model: str = VISION_MODEL) -> ImageConditions:
+                   model: str = VISION_MODEL,
+                   temperature: float = 0,
+                   seed: int | None = None) -> ImageConditions:
     base64_image = encode_image(image_path=image_path)
     completion = client.chat.completions.create(
         model=model,
@@ -43,7 +45,8 @@ def classify_image(image_path: str,
                 ]
             }
         ],
-        temperature=1,
+        temperature=temperature,
+        seed=seed,
         max_completion_tokens=1024,
         top_p=1,
         stream=False,

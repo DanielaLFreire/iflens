@@ -27,9 +27,15 @@ class ConditionClass:
         
         return condition
     
-    def get_random(self, exclude: list[str] | None = None) -> Condition:
+    def get_random(
+        self,
+        exclude: list[str] | None = None,
+        rng: random.Random | None = None,
+    ) -> Condition:
+        """Pick a condition other than `exclude`. Pass a seeded `rng` for reproducibility."""
         exclude = [] if not exclude else exclude
-        return random.choice([condition for condition in self.conditions.values() if condition.name not in exclude])
+        rng = rng if rng is not None else random
+        return rng.choice([condition for condition in self.conditions.values() if condition.name not in exclude])
     
 @dataclass
 class ConditionSchema:
@@ -83,14 +89,27 @@ class ImageConditions:
         conditions = {class_name: schema[class_name].get(condition_name) for class_name, condition_name in data.items()}
         return cls(conditions=conditions, schema=schema)
     
-    def get_variation(self, keep: list[str] | None = None) -> ImageConditions:
+    def get_variation(
+        self,
+        keep: list[str] | None = None,
+        rng: random.Random | None = None,
+    ) -> ImageConditions:
+        """Draw a new condition for every class not in `keep`.
+
+        Classes the classifier did not return are skipped (they used to raise).
+        Pass a seeded `rng` so the same image + seed always gives the same variation.
+        """
         keep = keep if keep else []
         variation = {}
         for condition_class in self.schema.classes.values():
             if condition_class.name in keep: continue
             value = self.conditions.get(condition_class.name)
-            variation[condition_class.name] = condition_class.get_random(exclude=[value.name]).name if value else None
+            if not value: continue
+            variation[condition_class.name] = condition_class.get_random(exclude=[value.name], rng=rng).name
         return ImageConditions.from_dict(schema=self.schema, data=variation)
+
+    def to_dict(self) -> dict[str, str]:
+        return {class_name: condition.name for class_name, condition in self.conditions.items()}
     
     def to_prompt(self):
         return "\n".join([condition.prompt for condition in self.conditions.values()])

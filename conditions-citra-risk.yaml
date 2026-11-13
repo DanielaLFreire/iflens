@@ -1,0 +1,13 @@
+# Extra values for the optional risk stratum of the pilot. They DO occur on the Brazilian coast
+# but may hide or alter vessels, invalidating the original boxes. Use only to measure the
+# discard rate; load this file in place of conditions-citra.yaml for those images.
+time_of_day:
+  noon: Bright overhead tropical daylight with strong illumination and short shadows.
+  afternoon: Afternoon daylight with warm angled illumination.
+
+sky:
+  overcast: Fully overcast sky with uniform grey cloud cover.
+
+atmosphere:
+  heavy_rain: Heavy tropical rainfall with significant visibility reduction.
+  dense_fog: Dense fog or sea mist with strongly reduced visibility.

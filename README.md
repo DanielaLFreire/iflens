@@ -106,3 +106,20 @@ python -m iflens.main
 - [Car Picture 1](examples\cars\domaxi198-shelby-3821712.jpg): Image by <a href="https://pixabay.com/pt/users/domaxi198-10651890/?utm_source=link-attribution&utm_medium=referral&utm_campaign=image&utm_content=3821712">domaxi198</a> via <a href="https://pixabay.com/pt//?utm_source=link-attribution&utm_medium=referral&utm_campaign=image&utm_content=3821712">Pixabay</a>
 - [Car Picture 2](examples\cars\mrefraim1-car-2667246.jpg): Image by <a href="https://pixabay.com/pt/users/mrefraim1-6230354/?utm_source=link-attribution&utm_medium=referral&utm_campaign=image&utm_content=2667246">mrefraim1</a> via <a href="https://pixabay.com/pt//?utm_source=link-attribution&utm_medium=referral&utm_campaign=image&utm_content=2667246">Pixabay</a>
 - [Car Picture 3](examples\cars\mibro-race-car-7624025.jpg): Image by <a href="https://pixabay.com/pt/users/mibro-8455312/?utm_source=link-attribution&utm_medium=referral&utm_campaign=image&utm_content=7624025">mibro</a> via <a href="https://pixabay.com/pt//?utm_source=link-attribution&utm_medium=referral&utm_campaign=image&utm_content=7624025">Pixabay</a>
+
+## Reproducible runs
+
+Every run now needs a master seed, and each output image gets a `AUG_<name>.json` record
+(conditions before/after, seeds, full prompt, model requested/returned, response id, timestamps,
+SHA-256 of input/output and of the conditions file):
+
+```bash
+python -m iflens.main --dataset path/to/images --conditions conditions-citra.yaml \
+  --n 50 --seed 42 --keep
+```
+
+Notes: sampling, classification (temperature 0, Groq `seed`) and condition variation are seeded.
+The image-editing call itself is **not** guaranteed deterministic (no seed is passed to the
+generation model), so archive the outputs; the record is what makes them auditable.
+`conditions-citra.yaml` is a restricted set for the Brazilian coast; `conditions-citra-risk.yaml`
+holds optional values (heavy rain, dense fog) that may invalidate bounding boxes.

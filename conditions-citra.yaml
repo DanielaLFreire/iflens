@@ -1,0 +1,21 @@
+# Conditions for the Brazilian coast / port complexes (Rio de Janeiro, Baía de Todos os Santos,
+# Santos). Only conditions that occur there AND leave a visible vessel that keeps its bounding box.
+# Excluded on purpose: snow/blizzard (do not occur), other planets, people (not relevant at sea),
+# night (vessel not visible, box would be invalid). See conditions-citra-risk.yaml for the
+# optional "risk" values (heavy rain, dense fog) that occur in Brazil but may invalidate labels.
+time_of_day:
+  dawn: Early daylight at sunrise with low, warm ambient illumination.
+  morning: Morning daylight with moderate illumination.
+  noon: Bright overhead tropical daylight with strong illumination and short shadows.
+  afternoon: Afternoon daylight with warm angled illumination.
+  dusk: Late daylight just after sunset with low ambient illumination, vessels still clearly visible.
+
+sky:
+  clear: Clear blue sky with no clouds.
+  partly_cloudy: Partly cloudy sky with scattered clouds.
+  overcast: Fully overcast sky with uniform grey cloud cover.
+
+atmosphere:
+  clean: Clear air with good visibility.
+  haze: Light tropical haze with slightly reduced contrast in the distance.
+  light_rain: Light rainfall with minor visibility reduction; vessels remain fully visible.

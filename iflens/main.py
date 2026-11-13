@@ -1,14 +1,26 @@
+import argparse
 import base64
 import os
+import shutil
 from datetime import UTC, datetime
+from random import Random
 
+import cv2
+import numpy as np
 from dotenv import load_dotenv
 from google import genai
 from google.genai.interactions import Interaction
 from groq import Groq
 
-from iflens.functions.classification import classify_image
+from iflens.functions.classification import VISION_MODEL, classify_image
 from iflens.functions.generation import BASE_GENERATION_PROMPT
+from iflens.reproducibility import (
+    derive_seed,
+    sample_names,
+    sha256_bytes,
+    sha256_file,
+    write_record,
+)
 from iflens.schema.conditions import ConditionSchema
 from iflens.utils import time_signed_print as print
 
@@ -35,145 +47,116 @@ def is_image(filename: str) -> bool:
     return ext.lower() in SUPPORTED_IMAGE_FORMATS
 
 
-if __name__ == "__main__":
-    NUMBER_OF_SAMPLE_IMAGES: int = 3  # Should be equal or smaller than the dataset size
+def image_size(data: bytes) -> tuple[int, int] | None:
+    """(width, height) of encoded image bytes, or None if undecodable."""
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    return None if img is None else (int(img.shape[1]), int(img.shape[0]))
 
-    DATASET_PATH: str = os.path.join("examples", "cars")
-    CONDITIONS_YAML_FILE: str = "conditions-example.yaml"
 
-    KEEP_CLASSES: list[str] = [
-        "planet"
-    ]  # Prevents the tool from varying specific condition classes
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="iflens: condition-based generative augmentation")
+    p.add_argument("--dataset", default=os.path.join("examples", "cars"))
+    p.add_argument("--conditions", default="conditions-example.yaml")
+    p.add_argument("--n", type=int, default=3, help="images to sample (<= dataset size)")
+    p.add_argument("--seed", type=int, required=True, help="master seed (recorded in every output)")
+    p.add_argument("--keep", nargs="*", default=["planet"],
+                   help="condition classes that must not be varied")
+    p.add_argument("--model", default="gemini-3.1-flash-lite-image",
+                   help="generation model id; pin an exact id and record it")
+    p.add_argument("--vision-model", default=VISION_MODEL)
+    p.add_argument("--output", default="output")
+    return p.parse_args()
 
-    GENERATION_MODEL: str = "gemini-3.1-flash-lite-image"
+
+def main():
+    args = parse_args()
 
     load_dotenv()
     check_env_keys()
 
     print("STEP 0 --- SETUP")
+    os.makedirs("input", exist_ok=True)
+    os.makedirs(args.output, exist_ok=True)
 
-    print("- Checking if input and output directories exist")
-
-    if not os.path.exists("input"):
-        print("- Creating input directory...")
-        os.mkdir("input")
-    else:
-        print("- Input OK")
-
-    if not os.path.exists("output"):
-        print("- Creating output directory...")
-        os.mkdir("output")
-    else:
-        print("- Output OK")
-
-    print("- Done!")
-
-    print("STEP 1 --- SAMPLING IMAGES TO AUGMENT")
-
-    print("- Fetching images...")
-
-    images = [f for f in os.listdir(DATASET_PATH) if is_image(f)]
-
+    print("STEP 1 --- SAMPLING IMAGES TO AUGMENT (seeded)")
+    images = [f for f in os.listdir(args.dataset) if is_image(f)]
     print(f"- {len(images)} images found")
-
-    print(f"- Sampling {NUMBER_OF_SAMPLE_IMAGES} images...")
-
-    sampled = []
-
-    from random import choice
-
-    for i in range(NUMBER_OF_SAMPLE_IMAGES):
-        chosen_img = choice(images)
-        images.remove(chosen_img)
-
-        sampled.append(chosen_img)
-
+    sampled = sample_names(images, args.n, args.seed)
     print(f"- Sampled {len(sampled)} images.")
 
     print("STEP 2 --- Creating folder with sampled images and annotations")
-
     experiment_time: str = datetime.now(tz=UTC).strftime("%Y-%m-%d_%H-%M-%S")
-
-    experiment_origin: str = "input"
-    experiment_folder: str = os.path.join(experiment_origin, f"{experiment_time}")
-
+    experiment_folder: str = os.path.join("input", experiment_time)
     os.makedirs(experiment_folder, exist_ok=True)
-
-    import shutil
 
     for sample_img in sampled:
         print(f"- Copying image {sample_img}")
         try:
-            img_path = os.path.join(DATASET_PATH, sample_img)
+            img_path = os.path.join(args.dataset, sample_img)
             annotation = os.path.splitext(img_path)[0] + ".txt"
-
             shutil.copy(img_path, os.path.join(experiment_folder, sample_img))
-            shutil.copy(
-                annotation,
-                os.path.join(experiment_folder, os.path.basename(annotation)),
-            )
-
-            print("- Done")
+            shutil.copy(annotation, os.path.join(experiment_folder, os.path.basename(annotation)))
         except Exception as e:
             print(f"- Error: {e!r}")
             print("Skipping...")
 
-    print(
-        f"- {len(os.listdir(experiment_folder))} files in experiment folder (expected: {2 * NUMBER_OF_SAMPLE_IMAGES})"
-    )
-
     print("- STEP 3 --- Generating Augmentations")
-
     client = genai.Client()
     groq_client = Groq()
 
-    images = [f for f in os.listdir(experiment_folder) if is_image(f)]
-
-    output_folder: str = os.path.join("output", f"{experiment_time}")
+    images = sorted(f for f in os.listdir(experiment_folder) if is_image(f))
+    output_folder: str = os.path.join(args.output, experiment_time)
     os.makedirs(output_folder, exist_ok=True)
 
+    schema = ConditionSchema.from_yaml(path=args.conditions)
+    conditions_file_sha256 = sha256_file(args.conditions)
     print(f"- Ready to augment {len(images)} images")
-    schema = ConditionSchema.from_yaml(path=CONDITIONS_YAML_FILE)
-
-    print("[!] Initializing Pipeline...")
 
     for i, image in enumerate(images):
+        tag = f"({i + 1}/{len(images)})"
+        stem = os.path.splitext(image)[0]
+        record: dict = {
+            "image": image,
+            "master_seed": args.seed,
+            "conditions_file": args.conditions,
+            "conditions_file_sha256": conditions_file_sha256,
+            "keep_classes": args.keep,
+            "generation_model_requested": args.model,
+            "vision_model": args.vision_model,
+            "status": "started",
+        }
         try:
-            print(f"({i + 1}/{len(images)})", f"- Image {image}")
+            print(tag, f"- Image {image}")
             in_filename = os.path.join(experiment_folder, image)
-            out_filename = os.path.join(
-                output_folder, f"AUG_{os.path.splitext(image)[0]}.png"
-            )
-
-            print(f"({i + 1}/{len(images)})", "- Classifying image...")
-
-            conditions = classify_image(in_filename, schema, groq_client)
-            variation = conditions.get_variation(keep=KEEP_CLASSES)
-
-            print(
-                f"({i + 1}/{len(images)})",
-                f"- Original Conditions: {conditions.to_prompt()}",
-            )
-            print("-" * 20)
-            print(
-                f"({i + 1}/{len(images)})",
-                f"- Variation Conditions: {variation.to_prompt()}",
-            )
-
-            print(f"({i + 1}/{len(images)})", "- Preparing image...")
+            out_filename = os.path.join(output_folder, f"AUG_{stem}.png")
 
             with open(in_filename, "rb") as f:
                 image_bytes = f.read()
+            record["input_sha256"] = sha256_bytes(image_bytes)
+            record["input_size_wh"] = image_size(image_bytes)
 
-            print(f"({i + 1}/{len(images)})", "- Generating variation...")
+            classify_seed = derive_seed(args.seed, image, "classify")
+            variation_seed = derive_seed(args.seed, image, "variation")
+            record["classify_seed"] = classify_seed
+            record["variation_seed"] = variation_seed
 
+            conditions = classify_image(
+                in_filename, schema, groq_client,
+                model=args.vision_model, temperature=0, seed=classify_seed,
+            )
+            variation = conditions.get_variation(keep=args.keep, rng=Random(variation_seed))
+            record["original_conditions"] = conditions.to_dict()
+            record["variation_conditions"] = variation.to_dict()
+
+            prompt = BASE_GENERATION_PROMPT + variation.to_prompt()
+            record["generation_prompt"] = prompt
+            print(tag, f"- Original: {conditions.to_dict()}  ->  Variation: {variation.to_dict()}")
+
+            record["generation_started_utc"] = datetime.now(tz=UTC).isoformat()
             interaction = client.interactions.create(
-                model=GENERATION_MODEL,
+                model=args.model,
                 input=[
-                    {
-                        "type": "text",
-                        "text": BASE_GENERATION_PROMPT + variation.to_prompt(),
-                    },
+                    {"type": "text", "text": prompt},
                     {
                         "type": "image",
                         "data": base64.b64encode(image_bytes).decode("utf-8"),
@@ -181,22 +164,31 @@ if __name__ == "__main__":
                     },
                 ],
             )
-
             assert isinstance(interaction, Interaction)
+            record["response_id"] = getattr(interaction, "id", None)
+            record["generation_model_returned"] = getattr(interaction, "model", None)
             assert interaction.output_image and interaction.output_image.data, (
                 "Generated image is None!"
             )
 
-            print(
-                f"({i + 1}/{len(images)})",
-                f"- Generated successfully! Saving to: {out_filename}",
-            )
-
+            out_bytes = base64.b64decode(interaction.output_image.data)
             with open(out_filename, "wb") as f:
-                f.write(base64.b64decode(interaction.output_image.data))
-
-            print(f"({i + 1}/{len(images)})", "- Done!")
+                f.write(out_bytes)
+            record["output_file"] = os.path.basename(out_filename)
+            record["output_sha256"] = sha256_bytes(out_bytes)
+            record["output_size_wh"] = image_size(out_bytes)
+            # Geometry check only; it does NOT prove the objects were preserved.
+            record["same_size_as_input"] = record["input_size_wh"] == record["output_size_wh"]
+            record["status"] = "ok"
+            print(tag, "- Done!")
         except Exception as e:
-            print(f"({i + 1}/{len(images)})", f"- Error: {e!r}")
-            print(f"({i + 1}/{len(images)})", "Skipping...")
-            continue
+            record["status"] = "error"
+            record["error"] = repr(e)
+            print(tag, f"- Error: {e!r}")
+            print(tag, "Skipping...")
+        finally:
+            write_record(os.path.join(output_folder, f"AUG_{stem}.json"), record)
+
+
+if __name__ == "__main__":
+    main()
