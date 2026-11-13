@@ -15,6 +15,8 @@ from groq import Groq
 from iflens.functions.classification import VISION_MODEL, classify_image
 from iflens.functions.generation import BASE_GENERATION_PROMPT
 from iflens.reproducibility import (
+    ASPECT_TOLERANCE,
+    aspect_deviation,
     derive_seed,
     sample_names,
     sha256_bytes,
@@ -177,8 +179,12 @@ def main():
             record["output_file"] = os.path.basename(out_filename)
             record["output_sha256"] = sha256_bytes(out_bytes)
             record["output_size_wh"] = image_size(out_bytes)
-            # Geometry check only; it does NOT prove the objects were preserved.
-            record["same_size_as_input"] = record["input_size_wh"] == record["output_size_wh"]
+            # Geometry check only; it does NOT prove the objects were preserved. The output
+            # resolution differs from the input (e.g. height 768), so compare the aspect ratio:
+            # normalised (YOLO) boxes stay valid only if the ratio is kept.
+            dev = aspect_deviation(record["input_size_wh"], record["output_size_wh"])
+            record["aspect_ratio_deviation"] = dev
+            record["same_aspect_ratio"] = dev is not None and dev <= ASPECT_TOLERANCE
             record["status"] = "ok"
             print(tag, "- Done!")
         except Exception as e:

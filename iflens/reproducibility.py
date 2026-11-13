@@ -37,3 +37,14 @@ def sample_names(names: list[str], k: int, master_seed: int) -> list[str]:
 def write_record(path: str | Path, record: dict) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+ASPECT_TOLERANCE = 0.005  # relative; the editing model fixes height at 768 px but keeps the ratio
+
+
+def aspect_deviation(size_a: tuple[int, int] | None, size_b: tuple[int, int] | None) -> float | None:
+    """Relative difference between width/height of two images (None if unknown)."""
+    if not size_a or not size_b:
+        return None
+    ra, rb = size_a[0] / size_a[1], size_b[0] / size_b[1]
+    return abs(ra - rb) / ra
