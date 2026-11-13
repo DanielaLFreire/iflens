@@ -66,6 +66,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", default="gemini-3.1-flash-lite-image",
                    help="generation model id; pin an exact id and record it")
     p.add_argument("--vision-model", default=VISION_MODEL)
+    p.add_argument("--prompt-file", default=None,
+                   help="text file with the base generation prompt (default: built-in); its SHA-256 is recorded")
     p.add_argument("--output", default="output")
     return p.parse_args()
 
@@ -110,6 +112,14 @@ def main():
     output_folder: str = os.path.join(args.output, experiment_time)
     os.makedirs(output_folder, exist_ok=True)
 
+    base_prompt = BASE_GENERATION_PROMPT
+    if args.prompt_file:
+        with open(args.prompt_file, encoding="utf-8") as f:
+            base_prompt = f.read()
+        if not base_prompt.endswith("\n"):
+            base_prompt += "\n"
+    base_prompt_sha256 = sha256_bytes(base_prompt.encode("utf-8"))
+
     schema = ConditionSchema.from_yaml(path=args.conditions)
     conditions_file_sha256 = sha256_file(args.conditions)
     print(f"- Ready to augment {len(images)} images")
@@ -123,6 +133,7 @@ def main():
             "conditions_file": args.conditions,
             "conditions_file_sha256": conditions_file_sha256,
             "keep_classes": args.keep,
+            "base_prompt_sha256": base_prompt_sha256,
             "generation_model_requested": args.model,
             "vision_model": args.vision_model,
             "status": "started",
@@ -150,7 +161,7 @@ def main():
             record["original_conditions"] = conditions.to_dict()
             record["variation_conditions"] = variation.to_dict()
 
-            prompt = BASE_GENERATION_PROMPT + variation.to_prompt()
+            prompt = base_prompt + variation.to_prompt()
             record["generation_prompt"] = prompt
             print(tag, f"- Original: {conditions.to_dict()}  ->  Variation: {variation.to_dict()}")
 
