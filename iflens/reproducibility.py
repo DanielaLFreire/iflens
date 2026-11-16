@@ -34,6 +34,23 @@ def sample_names(names: list[str], k: int, master_seed: int) -> list[str]:
     return rng.sample(sorted(names), k)
 
 
+def classification_key(input_sha256: str, vision_model: str, conditions_file_sha256: str) -> str:
+    """Cache key for a classification: same image + model + schema file -> same stored result."""
+    return f"{input_sha256}|{vision_model}|{conditions_file_sha256}"
+
+
+def load_cache(path: str | Path) -> dict[str, dict[str, str]]:
+    p = Path(path)
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+def save_cache(path: str | Path, cache: dict[str, dict[str, str]]) -> None:
+    p = Path(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(p)
+
+
 def write_record(path: str | Path, record: dict) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2, sort_keys=True)

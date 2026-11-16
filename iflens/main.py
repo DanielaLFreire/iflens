@@ -17,13 +17,16 @@ from iflens.functions.generation import BASE_GENERATION_PROMPT
 from iflens.reproducibility import (
     ASPECT_TOLERANCE,
     aspect_deviation,
+    classification_key,
     derive_seed,
+    load_cache,
     sample_names,
+    save_cache,
     sha256_bytes,
     sha256_file,
     write_record,
 )
-from iflens.schema.conditions import ConditionSchema
+from iflens.schema.conditions import ConditionSchema, ImageConditions
 from iflens.utils import time_signed_print as print
 
 
@@ -68,6 +71,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vision-model", default=VISION_MODEL)
     p.add_argument("--prompt-file", default=None,
                    help="text file with the base generation prompt (default: built-in); its SHA-256 is recorded")
+    p.add_argument("--classification-cache", default=None,
+                   help="JSON file: reuse the stored classification of an image (same file, vision model and "
+                        "conditions file) instead of calling the vision API again; new ones are added to it")
     p.add_argument("--output", default="output")
     return p.parse_args()
 
@@ -120,6 +126,7 @@ def main():
             base_prompt += "\n"
     base_prompt_sha256 = sha256_bytes(base_prompt.encode("utf-8"))
 
+    cache = load_cache(args.classification_cache) if args.classification_cache else {}
     schema = ConditionSchema.from_yaml(path=args.conditions)
     conditions_file_sha256 = sha256_file(args.conditions)
     print(f"- Ready to augment {len(images)} images")
@@ -153,10 +160,19 @@ def main():
             record["classify_seed"] = classify_seed
             record["variation_seed"] = variation_seed
 
-            conditions = classify_image(
-                in_filename, schema, groq_client,
-                model=args.vision_model, temperature=0, seed=classify_seed,
-            )
+            key = classification_key(record["input_sha256"], args.vision_model, conditions_file_sha256)
+            if key in cache:
+                conditions = ImageConditions.from_dict(schema=schema, data=cache[key])
+                record["classification_source"] = "cache"
+            else:
+                conditions = classify_image(
+                    in_filename, schema, groq_client,
+                    model=args.vision_model, temperature=0, seed=classify_seed,
+                )
+                record["classification_source"] = "api"
+                if args.classification_cache:
+                    cache[key] = conditions.to_dict()
+                    save_cache(args.classification_cache, cache)
             variation = conditions.get_variation(keep=args.keep, rng=Random(variation_seed))
             record["original_conditions"] = conditions.to_dict()
             record["variation_conditions"] = variation.to_dict()
